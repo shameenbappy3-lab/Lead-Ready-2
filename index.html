@@ -469,12 +469,12 @@
             <input type="email" name="email" required placeholder="you@company.com" />
           </label>
           <label>
-            Phone
-            <input type="tel" name="phone" required placeholder="(555) 000-0000" />
+            Phone (Optional)
+            <input type="tel" name="phone" placeholder="(555) 000-0000" />
           </label>
           <label>
-            Type of work
-            <select name="business_type" required>
+            Type of work (Optional)
+            <select name="business_type">
               <option value="" disabled selected>Choose one</option>
               <option>Landscaping</option>
               <option>Real estate</option>
@@ -486,8 +486,8 @@
             </select>
           </label>
           <label>
-            About how many new leads per month?
-            <select name="leads_per_month" required>
+            About how many new leads per month? (Optional)
+            <select name="leads_per_month">
               <option value="" disabled selected>Choose one</option>
               <option>Under 30</option>
               <option>30–100</option>
@@ -496,7 +496,7 @@
             </select>
           </label>
           <label class="full">
-            Anything I should know
+            Anything I should know (Optional)
             <textarea
               name="message"
               rows="4"
