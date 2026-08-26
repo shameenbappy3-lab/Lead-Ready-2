@@ -83,9 +83,19 @@ body {
 .pain,
 .story,
 .examples,
+.results,
 .pricing,
 .book {
   padding: 72px 6vw;
+}
+
+.cost-summary ul {
+  margin: 4px 0 14px;
+  padding-left: 22px;
+}
+
+.cost-summary li {
+  margin-bottom: 6px;
 }
 
 .hero {
