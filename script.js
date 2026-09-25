@@ -61,21 +61,17 @@ if ("IntersectionObserver" in window) {
   });
 }
 
-
 (function trackingInit() {
   const params = new URLSearchParams(window.location.search);
   const trackingId = params.get("c");
- 
+
   if (!trackingId) return;
- 
+
   const sessionId =
     window.crypto && crypto.randomUUID
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
- 
-  // Captured once, at load, so a Clarity replay that shows the
-  // visitor "landing" on the booking section can be checked
-  // against what the browser actually reports here.
+
   const initialState = {
     url: window.location.href,
     hash: window.location.hash || "",
@@ -84,31 +80,36 @@ if ("IntersectionObserver" in window) {
     width: window.innerWidth,
     height: window.innerHeight,
   };
- 
+
   const startedAt = Date.now();
   const sentKeys = new Set();
- 
-  function send(event, data) {
-    // Crude de-dupe: don't fire the same milestone twice in one
-    // session (e.g. scroll bouncing around 50%).
-    const key = event;
-    if (sentKeys.has(key)) return;
-    sentKeys.add(key);
- 
+
+  /**
+   * Sends telemetry to backend API.
+   * @param {string} event - Event name
+   * @param {Object} [data={}] - Custom event payload
+   * @param {boolean|string} [dedupeKey=false] - If false/string, enforces single-fire rule. If true, allows duplicates.
+   */
+  function send(event, data = {}, dedupeKey = false) {
+    if (dedupeKey !== true) {
+      const key = typeof dedupeKey === "string" ? dedupeKey : event;
+      if (sentKeys.has(key)) return;
+      sentKeys.add(key);
+    }
+
     const payload = JSON.stringify({
       trackingId,
       sessionId,
       event,
       timestamp: Date.now(),
       initialState,
-      data: data || {},
+      data,
     });
- 
+
     if (navigator.sendBeacon) {
       const blob = new Blob([payload], { type: "application/json" });
       navigator.sendBeacon("/api/track", blob);
     } else {
-      // Fallback for older browsers without sendBeacon.
       fetch("/api/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -117,17 +118,17 @@ if ("IntersectionObserver" in window) {
       }).catch(() => {});
     }
   }
- 
+
   send("page_loaded");
- 
-  // --- Scroll depth ---
+
+  // --- Scroll Depth Tracking ---
   const scrollMilestones = [25, 50, 75, 90];
   let scrollTicking = false;
- 
+
   window.addEventListener("scroll", () => {
     if (scrollTicking) return;
     scrollTicking = true;
- 
+
     requestAnimationFrame(() => {
       const scrollableHeight =
         document.documentElement.scrollHeight - window.innerHeight;
@@ -135,69 +136,88 @@ if ("IntersectionObserver" in window) {
         scrollableHeight > 0
           ? Math.round((window.scrollY / scrollableHeight) * 100)
           : 100;
- 
+
       scrollMilestones.forEach((milestone) => {
         if (scrolledPercent >= milestone) {
           send(`scroll_${milestone}`, { scrollPercent: scrolledPercent });
         }
       });
- 
+
       scrollTicking = false;
     });
   });
- 
-  // --- Time on page ---
-  [10, 30, 60].forEach((seconds) => {
-    setTimeout(() => send(`time_${seconds}s`), seconds * 1000);
+
+  // --- Active Time on Page Tracking ---
+  const timeMilestones = [10, 30, 60];
+  let activeTimeMs = 0;
+  let lastTick = Date.now();
+
+  function checkTimeMilestones() {
+    const now = Date.now();
+    if (document.visibilityState === "visible") {
+      activeTimeMs += now - lastTick;
+      const activeSeconds = Math.floor(activeTimeMs / 1000);
+
+      timeMilestones.forEach((s) => {
+        if (activeSeconds >= s) {
+          send(`time_${s}s`, { activeMs: activeTimeMs });
+        }
+      });
+    }
+    lastTick = now;
+  }
+
+  const timeInterval = setInterval(checkTimeMilestones, 1000);
+
+  // --- Event Delegation for CTA Clicks ---
+  document.addEventListener("click", (e) => {
+    const target = e.target.closest("a, button");
+    if (!target) return;
+
+    const label = (
+      target.getAttribute("href") ||
+      target.dataset.tab ||
+      target.textContent.trim()
+    ).slice(0, 60);
+
+    if (/how|book/i.test(label)) {
+      // Keyed by label so clicking a new CTA works, but rapid double-clicking the same CTA is suppressed
+      send("cta_clicked", { label }, `cta_clicked:${label}`);
+    }
   });
- 
-  // --- CTA clicks: how-it-works tabs, booking links/buttons ---
-  document.querySelectorAll("a, button").forEach((el) => {
-    el.addEventListener("click", () => {
-      const label = (
-        el.getAttribute("href") ||
-        el.dataset.tab ||
-        el.textContent.trim()
-      ).slice(0, 60);
- 
-      if (/how|book/i.test(label)) {
-        send("cta_clicked", { label });
-      }
-    });
-  });
- 
-  // --- Form interaction / submission ---
+
+  // --- Form Interaction & Submission ---
   const leadForm = document.querySelector("form");
   if (leadForm) {
     let formStarted = false;
- 
-    leadForm.addEventListener(
-      "focusin",
-      () => {
-        if (!formStarted) {
-          formStarted = true;
-          send("form_started");
-        }
-      },
-      { once: false }
-    );
- 
+
+    leadForm.addEventListener("focusin", () => {
+      if (!formStarted) {
+        formStarted = true;
+        send("form_started");
+      }
+    });
+
     leadForm.addEventListener("submit", () => {
-      send("form_submitted");
+      send("form_submitted", {}, true); // Allow retry submissions if form fails
     });
   }
- 
-  // --- Tab visibility (backgrounded / switched away) ---
+
+  // --- Visibility & Window Unload Tracking ---
   document.addEventListener("visibilitychange", () => {
+    // Flush any pending active time before backgrounding or resuming
+    checkTimeMilestones();
+
+    // Allow multiple visibility logs over a session lifecycle
     send(
       document.visibilityState === "hidden" ? "page_hidden" : "page_visible",
-      { atMs: Date.now() - startedAt }
+      { atMs: Date.now() - startedAt },
+      true
     );
   });
- 
-  // --- Reliable last-chance beacon on tab close / navigation ---
+
   window.addEventListener("pagehide", () => {
-    send("page_hide", { atMs: Date.now() - startedAt });
+    clearInterval(timeInterval);
+    send("page_hide", { atMs: Date.now() - startedAt }, true);
   });
 })();
- 
