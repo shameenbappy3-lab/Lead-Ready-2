@@ -33,9 +33,39 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // Vercel puts the real visitor IP first in x-forwarded-for; any
+  // entries after that are proxies/CDNs in between. Captured now so
+  // it's available later even though nothing filters on it yet —
+  // bot detection currently lives in Supabase views based on event
+  // timing instead (see suspicious_tracking_ids / tracking_summary).
+  const forwardedFor = req.headers["x-forwarded-for"];
+  const ip =
+    (typeof forwardedFor === "string"
+      ? forwardedFor.split(",")[0].trim()
+      : null) ||
+    req.socket?.remoteAddress ||
+    null;
+  const userAgent = req.headers["user-agent"] || null;
+
+  // Vercel's edge network tags every request with the visitor's
+  // approximate location before it reaches this function — free,
+  // no third-party lookup needed. Empty when testing with
+  // `vercel dev` locally; only populated on real deployed traffic.
+  const country = req.headers["x-vercel-ip-country"] || null;
+  const region = req.headers["x-vercel-ip-country-region"] || null;
+  const city = req.headers["x-vercel-ip-city"] || null;
+
   // Still logged too — cheap to keep, and useful for a live
   // sanity check within Vercel's 1-hour log window.
-  console.log("[track]", { trackingId, sessionId, event, timestamp });
+  console.log("[track]", {
+    trackingId,
+    sessionId,
+    event,
+    timestamp,
+    ip,
+    city,
+    country,
+  });
 
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     console.error(
@@ -66,6 +96,11 @@ module.exports = async function handler(req, res) {
           event_timestamp: timestamp || null,
           initial_state: initialState || null,
           data: data || null,
+          ip_address: ip,
+          user_agent: userAgent,
+          country,
+          region,
+          city,
         }),
       }
     );
